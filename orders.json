@@ -1,0 +1,20 @@
+[
+  {
+    "bar": 227,
+    "side": "BUY",
+    "size": 1,
+    "position": 1
+  },
+  {
+    "bar": 618,
+    "side": "SELL",
+    "size": 1,
+    "position": -1
+  },
+  {
+    "bar": 1119,
+    "side": "BUY",
+    "size": 1,
+    "position": 1
+  }
+]
