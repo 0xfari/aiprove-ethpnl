@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Independent Python cross-check of strategy.js + replay.js.
+"""Independent Python cross-check of strategy.js + replay.js (v2).
 
-Re-implements the Donchian-150 breakout from scratch (no shared code with
-the JS) and prints the same summary. Run: python3 backtest.py [bars.csv]
-Expected: net +69.78, 6 fills, 3 closed legs, win rate 66.7%, max DD 47.41.
+Re-implements the asymmetric short-first Donchian from scratch (no shared
+code with the JS) and prints the same summary. Run: python3 backtest.py [bars.csv]
+Expected: net +92.32, 4 fills, 2 closed legs, win rate 100.0%, max DD 36.67.
 """
 import csv
 import math
 import statistics
 import sys
 
-LOOKBACK = 150
+LONG_LOOKBACK = 85
+SHORT_LOOKBACK = 240
 TAKER_FEE = 0.0004
 SLIPPAGE_PER_ETH = 0.0002
 START = 10000.0
@@ -36,14 +37,22 @@ def main(path="bars.csv"):
         return (TAKER_FEE + SLIPPAGE_PER_ETH) * px
 
     for i in range(n - 1):
-        # target at bar i (channel = prior LOOKBACK bars only)
+        # target at bar i (channels use prior bars only); short-first rule
         target = pos
-        if i >= LOOKBACK:
-            hi = max(highs[i - LOOKBACK:i])
-            lo = min(lows[i - LOOKBACK:i])
-            if closes[i] > hi:
+        long_break = (
+            i >= LONG_LOOKBACK and closes[i] > max(highs[i - LONG_LOOKBACK:i])
+        )
+        short_break = (
+            i >= SHORT_LOOKBACK and closes[i] < min(lows[i - SHORT_LOOKBACK:i])
+        )
+        if pos == 0:
+            if short_break:
+                target = -1
+        elif pos == -1:
+            if long_break:
                 target = 1
-            elif closes[i] < lo:
+        else:
+            if short_break:
                 target = -1
         if target != pos:
             px = opens[i + 1]

@@ -1,4 +1,4 @@
-// replay.js — local replay / grading harness for eth-pnl-fixed.
+// replay.js — local replay / grading harness for eth-pnl-fixed (v2).
 // Usage: node replay.js [bars.csv]
 // Reads bars.csv + strategy.js, executes every order at the OPEN of the
 // next bar (no phantom fills), applies the stated costs, liquidates any open

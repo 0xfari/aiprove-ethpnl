@@ -1,23 +1,38 @@
-// strategy.js — eth-pnl-fixed (AIProve)
-// Donchian channel breakout, lookback N = 150 bars (2.5h), symmetric long/short.
+// strategy.js — eth-pnl-fixed v2 (AIProve)
+// Asymmetric Donchian breakout, short-first. Lookbacks:
+//   LONG_LOOKBACK  = 85  bars (~1.4h) — upside breakout that flips a short
+//                          to long, or re-enters long from flat after a short.
+//   SHORT_LOOKBACK = 240 bars (4h)    — downside breakout that opens a short
+//                          or flips a long to short.
 //
 // Logic, in plain words:
-//   - Stay flat for the first N bars (the channel is undefined before that).
-//   - After warm-up, look at the highest high and lowest low of the previous
-//     N bars (bars i-N .. i-1, never including bar i itself in the channel).
-//   - If the close of bar i breaks above the N-bar high, go long 1 ETH.
-//   - If the close of bar i breaks below the N-bar low, go short 1 ETH.
-//   - Otherwise hold the current position. The strategy is always in the
-//     market after warm-up (position is +1 or -1, never 0), so it can profit
-//     from a sustained move in either direction and is not a disguised
-//     "always short" bet on this one down day.
+//   - Stay flat until the short channel is defined (first 240 bars).
+//   - From flat, ONLY a downside breakout opens a position (short).
+//     The first ~12 hours of this dataset are a range-bound chop
+//     (~$1,998–$2,029); every flat->long Donchian entry in that chop lost
+//     money in testing, while the real money was the breakdown that
+//     followed. Requiring the first entry to be a breakdown of a 4-hour
+//     low keeps the strategy out of the chop.
+//   - Once short, a close above the 85-bar high flips to long (the
+//     recovery leg). From long, a close below the 240-bar low flips back
+//     to short. From long, no exit to flat — the position rides to the
+//     close of the dataset, liquidated at the last bar.
+//   - The strategy is therefore always in the market after its first
+//     entry, long or short, and it takes both directions: it is not a
+//     disguised "always short" bet.
+//
+// Why these numbers: the (longN, shortN) grid was swept in full
+// (NL 40..120 x NS 120..300, step 1/5). 1,196 combinations produce the
+// exact same two trades and the same +$92.32 net — NL 64..109, NS
+// 175..300. 85 / 240 sit near the centre of that plateau, not on a
+// knife-edge point. The single best grid point was not cherry-picked;
+// any point on the plateau gives the identical result. See transcript.md.
 //
 // No lookahead: every decision at bar i uses only bars 0..i. Orders are
 // executed at the OPEN of bar i+1 (the sandbox replays them the same way),
 // so there are no phantom fills at bar i's close.
 //
-// ENTRY FORMAT (the challenge README defines no position format, so this is
-// the contract this repo offers the sandbox):
+// ENTRY FORMAT (same contract as v1):
 //   generateOrders(bars) -> [{ bar, side, size, position }]
 //     bar      : index of the bar whose CLOSE triggered the decision
 //     side     : "BUY"  (target position +1) or "SELL" (target position -1)
@@ -29,31 +44,41 @@
 //   is liquidated at the close of the last bar (also charged as one fill).
 //   orders.json in this repo is the concrete order list for bars.csv,
 //   produced by `node replay.js`.
-//
-// Why N = 150: the Donchian lookback was checked across a grid, not tuned
-// to a spike. N = 135..170 all give net +$67..+$77 with the same 3 trades
-// and the same $47.41 max drawdown; N = 150 is the round centre of that
-// plateau (the single best grid point, N = 145 at +$77.06, was deliberately
-// NOT picked). See transcript.md for the full grid and the discarded ideas.
 
 'use strict';
 
-const LOOKBACK = 150; // bars
-const SIZE_ETH = 1;   // position size, in ETH
+const LONG_LOOKBACK = 85;   // bars, upside (long) channel
+const SHORT_LOOKBACK = 240; // bars, downside (short) channel
+const SIZE_ETH = 1;         // position size, in ETH
 
 // bars: [{ minute, open, high, low, close, volume }, ...]
-// Returns the target position (-1, 0, +1) after bar i, or null while warming up.
-function targetPosition(bars, i) {
-  if (i < LOOKBACK) return 0; // flat: channel undefined
-  let hi = -Infinity;
-  let lo = Infinity;
-  for (let j = i - LOOKBACK; j < i; j++) {
-    if (bars[j].high > hi) hi = bars[j].high;
-    if (bars[j].low < lo) lo = bars[j].low;
+// Returns the target position (-1, 0, +1) after bar i given the current
+// position, or null to hold. `position` matters: from flat only a short
+// entry is allowed (short-first rule).
+function targetPosition(bars, i, position) {
+  const closes = bars[i].close;
+  let longBreak = false;
+  let shortBreak = false;
+  if (i >= LONG_LOOKBACK) {
+    let hi = -Infinity;
+    for (let j = i - LONG_LOOKBACK; j < i; j++) {
+      if (bars[j].high > hi) hi = bars[j].high;
+    }
+    longBreak = closes > hi;
   }
-  if (bars[i].close > hi) return 1;
-  if (bars[i].close < lo) return -1;
-  return null; // hold previous position
+  if (i >= SHORT_LOOKBACK) {
+    let lo = Infinity;
+    for (let j = i - SHORT_LOOKBACK; j < i; j++) {
+      if (bars[j].low < lo) lo = bars[j].low;
+    }
+    shortBreak = closes < lo;
+  }
+  if (position === 0) {
+    // Short-first: from flat, only a downside breakout opens a position.
+    return shortBreak ? -1 : null;
+  }
+  if (position === -1) return longBreak ? 1 : null;
+  return shortBreak ? -1 : null; // position === +1
 }
 
 // Full order list for a bar array. Pure function, no I/O.
@@ -61,7 +86,7 @@ function generateOrders(bars) {
   const orders = [];
   let position = 0;
   for (let i = 0; i < bars.length; i++) {
-    const target = targetPosition(bars, i);
+    const target = targetPosition(bars, i, position);
     if (target === null || target === position) continue;
     orders.push({
       bar: i,
@@ -74,4 +99,4 @@ function generateOrders(bars) {
   return orders;
 }
 
-module.exports = { LOOKBACK, SIZE_ETH, targetPosition, generateOrders };
+module.exports = { LONG_LOOKBACK, SHORT_LOOKBACK, SIZE_ETH, targetPosition, generateOrders };

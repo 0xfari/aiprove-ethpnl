@@ -1,18 +1,12 @@
 [
   {
-    "bar": 227,
-    "side": "BUY",
-    "size": 1,
-    "position": 1
-  },
-  {
-    "bar": 618,
+    "bar": 738,
     "side": "SELL",
     "size": 1,
     "position": -1
   },
   {
-    "bar": 1119,
+    "bar": 1086,
     "side": "BUY",
     "size": 1,
     "position": 1
